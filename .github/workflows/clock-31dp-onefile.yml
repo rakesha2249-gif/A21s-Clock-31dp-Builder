@@ -72,7 +72,7 @@ jobs:
             --no-resource-removal \
             out/compiled.zip
           "$BUILD/aapt2" dump resources out/clock-overlay-unsigned.apk > out/resources.txt
-          "$BUILD/aapt2" dump xmltree out/clock-overlay-unsigned.apk AndroidManifest.xml > out/manifest.txt
+          "$BUILD/aapt2" dump xmltree out/clock-overlay-unsigned.apk --file AndroidManifest.xml > out/manifest.txt
           grep -q 'a21s_clock_left_padding' out/resources.txt
           grep -q 'com.android.systemui' out/manifest.txt
 
@@ -116,3 +116,4 @@ jobs:
             out/source-overlays.xml
             out/README-WARNING.txt
           if-no-files-found: error
+          
