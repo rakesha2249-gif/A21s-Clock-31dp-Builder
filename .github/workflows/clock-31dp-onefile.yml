@@ -1,0 +1,106 @@
+name: Build Galaxy A21s Clock 31dp Overlay TEST
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Setup Android SDK build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Create source, compile RRO, sign and package trial only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p clock-overlay/res/values clock-overlay/res/xml out
+          cat > clock-overlay/AndroidManifest.xml <<'MANIFEST'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="com.a21s.clockpadding.overlay"
+              android:versionCode="1"
+              android:versionName="1.0">
+              <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="36" />
+              <application android:hasCode="false" />
+              <overlay android:targetPackage="com.android.systemui"
+                       android:resourcesMap="@xml/overlays"
+                       android:isStatic="false" />
+          </manifest>
+          MANIFEST
+          cat > clock-overlay/res/values/dimens.xml <<'DIMENS'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <dimen name="a21s_clock_left_padding">31dp</dimen>
+          </resources>
+          DIMENS
+          cat > clock-overlay/res/xml/overlays.xml <<'OVERLAYS'
+          <?xml version="1.0" encoding="utf-8"?>
+          <overlay>
+              <item target="dimen/status_bar_left_clock_starting_padding"
+                    value="@dimen/a21s_clock_left_padding" />
+          </overlay>
+          OVERLAYS
+
+          BUILD="$ANDROID_HOME/build-tools/36.0.0"
+          PLATFORM="$ANDROID_HOME/platforms/android-36/android.jar"
+          "$BUILD/aapt2" compile --dir clock-overlay/res -o out/compiled.zip
+          "$BUILD/aapt2" link \
+            -o out/clock-overlay-unsigned.apk \
+            --manifest clock-overlay/AndroidManifest.xml \
+            -I "$PLATFORM" \
+            --no-resource-deduping \
+            out/compiled.zip
+          "$BUILD/aapt2" dump resources out/clock-overlay-unsigned.apk > out/resources.txt
+          "$BUILD/aapt2" dump xmltree out/clock-overlay-unsigned.apk AndroidManifest.xml > out/manifest.txt
+          grep -q 'a21s_clock_left_padding' out/resources.txt
+          grep -q 'com.android.systemui' out/manifest.txt
+
+          keytool -genkeypair -noprompt \
+            -alias a21s -keyalg RSA -keysize 2048 -validity 365 \
+            -dname 'CN=A21s Clock Overlay TEST ONLY' \
+            -keystore out/test-keystore.jks -storepass android -keypass android
+          "$BUILD/zipalign" -f 4 out/clock-overlay-unsigned.apk out/clock-overlay-aligned.apk
+          "$BUILD/apksigner" sign \
+            --ks out/test-keystore.jks --ks-key-alias a21s \
+            --ks-pass pass:android --key-pass pass:android \
+            --out out/A21sClockOverlay.apk out/clock-overlay-aligned.apk
+          "$BUILD/apksigner" verify --verbose out/A21sClockOverlay.apk > out/signature-check.txt
+          unzip -tqq out/A21sClockOverlay.apk
+
+          mkdir -p module/system/product/overlay/A21sClockPadding
+          cp out/A21sClockOverlay.apk module/system/product/overlay/A21sClockPadding/A21sClockOverlay.apk
+          cat > module/module.prop <<'PROPERTIES'
+          id=a21s_clock_31dp_rro_trial
+          name=A21s 31dp Clock Padding RRO - experimental
+          version=1.0
+          versionCode=1
+          author=Custom RRO builder
+          description=Experimental opt-in product overlay; does not replace SystemUI APK
+          PROPERTIES
+          (cd module && zip -qr ../out/A21s-Clock-KernelSU-EXPERIMENTAL.zip .)
+          cp clock-overlay/AndroidManifest.xml out/source-AndroidManifest.xml
+          cp clock-overlay/res/xml/overlays.xml out/source-overlays.xml
+          printf 'Overlay built and signed. NOT tested on phone. NOT approved for installation.\n' > out/README-WARNING.txt
+      - name: Upload diagnostic APK and TEST KernelSU zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: A21s-Clock-31dp-EXPERIMENTAL-TEST
+          path: |
+            out/A21s-Clock-KernelSU-EXPERIMENTAL.zip
+            out/A21sClockOverlay.apk
+            out/resources.txt
+            out/manifest.txt
+            out/signature-check.txt
+            out/source-AndroidManifest.xml
+            out/source-overlays.xml
+            out/README-WARNING.txt
+          if-no-files-found: error
+          
